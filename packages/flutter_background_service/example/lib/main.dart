@@ -9,13 +9,31 @@ import 'package:flutter_background_service_android/flutter_background_service_an
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'file_io.dart';
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await initializeService();
-  runApp(const MyApp());
+
+  HerdDump.instance;
+  debugPrint = (String? message, {int? wrapWidth}) {
+    print(message); // HerdDump will re-direct stdout to a file.
+  };
+
+  final service = await initializeService();
+
+  service.on('update').listen((event) {
+    debugPrint(
+        '${DateTime.tryParse(event?["current_date"])} - update received: ');
+  });
+
+  Timer.periodic(const Duration(seconds: 10), (timer) async {
+    debugPrint('${DateTime.now()} - Main Thread');
+  });
+
+  runApp(MyApp(service));
 }
 
-Future<void> initializeService() async {
+Future<FlutterBackgroundService> initializeService() async {
   final service = FlutterBackgroundService();
 
   /// OPTIONAL, using custom notification channel id
@@ -69,7 +87,11 @@ Future<void> initializeService() async {
     ),
   );
 
-  service.startService();
+  bool started = await service.startService();
+
+  debugPrint('service started: $started');
+
+  return service;
 }
 
 // to ensure this is executed
@@ -91,6 +113,8 @@ Future<bool> onIosBackground(ServiceInstance service) async {
 
 @pragma('vm:entry-point')
 void onStart(ServiceInstance service) async {
+  debugPrint('onStart called');
+
   // Only available for flutter 3.0.0 and later
   DartPluginRegistrant.ensureInitialized();
 
@@ -119,35 +143,40 @@ void onStart(ServiceInstance service) async {
   });
 
   // bring to foreground
-  Timer.periodic(const Duration(seconds: 1), (timer) async {
+  Timer.periodic(const Duration(seconds: 10), (timer) async {
+    bool isBackground = false;
     if (service is AndroidServiceInstance) {
       if (await service.isForegroundService()) {
+        isBackground = false;
+
         /// OPTIONAL for use custom notification
         /// the notification id must be equals with AndroidConfiguration when you call configure() method.
-        flutterLocalNotificationsPlugin.show(
-          888,
-          'COOL SERVICE',
-          'Awesome ${DateTime.now()}',
-          const NotificationDetails(
-            android: AndroidNotificationDetails(
-              'my_foreground',
-              'MY FOREGROUND SERVICE',
-              icon: 'ic_bg_service_small',
-              ongoing: true,
-            ),
-          ),
-        );
+        // flutterLocalNotificationsPlugin.show(
+        //   888,
+        //   'COOL SERVICE',
+        //   'Awesome ${DateTime.now()}',
+        //   const NotificationDetails(
+        //     android: AndroidNotificationDetails(
+        //       'my_foreground',
+        //       'MY FOREGROUND SERVICE',
+        //       icon: 'ic_bg_service_small',
+        //       ongoing: true,
+        //     ),
+        //   ),
+        // );
 
         // if you don't using custom notification, uncomment this
         // service.setForegroundNotificationInfo(
         //   title: "My App Service",
         //   content: "Updated at ${DateTime.now()}",
         // );
+      } else {
+        isBackground = true;
       }
     }
 
     /// you can see this log in logcat
-    print('FLUTTER BACKGROUND SERVICE: ${DateTime.now()}');
+    print('${DateTime.now()} - FLUTTER BACKGROUND SERVICE: $isBackground');
 
     // test using external plugin
     final deviceInfo = DeviceInfoPlugin();
@@ -173,13 +202,23 @@ void onStart(ServiceInstance service) async {
 }
 
 class MyApp extends StatefulWidget {
-  const MyApp({Key? key}) : super(key: key);
+  final FlutterBackgroundService service;
+
+  const MyApp(this.service, {Key? key}) : super(key: key);
 
   @override
   State<MyApp> createState() => _MyAppState();
 }
 
 class _MyAppState extends State<MyApp> {
+  late FlutterBackgroundService service;
+
+  @override
+  void initState() {
+    service = widget.service;
+    super.initState();
+  }
+
   String text = "Stop Service";
   @override
   Widget build(BuildContext context) {
@@ -191,7 +230,7 @@ class _MyAppState extends State<MyApp> {
         body: Column(
           children: [
             StreamBuilder<Map<String, dynamic>?>(
-              stream: FlutterBackgroundService().on('update'),
+              stream: service.on('update'),
               builder: (context, snapshot) {
                 if (!snapshot.hasData) {
                   return const Center(
@@ -213,19 +252,18 @@ class _MyAppState extends State<MyApp> {
             ElevatedButton(
               child: const Text("Foreground Mode"),
               onPressed: () {
-                FlutterBackgroundService().invoke("setAsForeground");
+                service.invoke("setAsForeground");
               },
             ),
             ElevatedButton(
               child: const Text("Background Mode"),
               onPressed: () {
-                FlutterBackgroundService().invoke("setAsBackground");
+                service.invoke("setAsBackground");
               },
             ),
             ElevatedButton(
               child: Text(text),
               onPressed: () async {
-                final service = FlutterBackgroundService();
                 var isRunning = await service.isRunning();
                 if (isRunning) {
                   service.invoke("stopService");

@@ -49,6 +49,9 @@ dependencies:
   # optional if you wish to use a custom foreground service notification
   flutter_local_notifications: ^9.9.1
 
+  permission_handler: ^10.2.0
+  external_path: ^1.0.3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
